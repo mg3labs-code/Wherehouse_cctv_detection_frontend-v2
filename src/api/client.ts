@@ -98,8 +98,28 @@ function apiPath(path: string): string {
   return `${origin}${p}`
 }
 
+/**
+ * Every /api/* endpoint on the backend now requires a shared API key (see
+ * the backend's Phase 0 security change). VITE_API_KEY is baked into this
+ * build at build time — set it as a real environment variable wherever you
+ * build the frontend (Railway's Variables tab, or your shell for local dev),
+ * never hardcoded here or committed to a .env file.
+ *
+ * Be aware this is a deterrent against casual abuse of a public URL, not
+ * real per-user authentication: anyone who opens browser devtools on the
+ * built dashboard can read this key out of the bundled JS. That's an
+ * accepted, documented tradeoff for this phase — see the backend's
+ * api/app.py for the fuller explanation.
+ */
+const API_KEY = (import.meta.env.VITE_API_KEY as string | undefined)?.trim()
+
+/** Headers to attach to every request against this backend. */
+export function authHeaders(): Record<string, string> {
+  return API_KEY ? { 'X-API-Key': API_KEY } : {}
+}
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(apiPath(path))
+  const res = await fetch(apiPath(path), { headers: { ...authHeaders() } })
   if (!res.ok) {
     const detail = await res.text()
     throw new Error(detail || `${res.status} ${res.statusText}`)
@@ -110,7 +130,7 @@ async function get<T>(path: string): Promise<T> {
 async function post<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(apiPath(path), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: body ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) {
@@ -193,6 +213,7 @@ export const api = {
   },
   videoUrl: (name: string) => {
     const qs = new URLSearchParams({ name })
+    if (API_KEY) qs.set('api_key', API_KEY)
     const origin = resolveApiOrigin()
     return origin ? `${origin}/api/videos/file?${qs}` : `/api/videos/file?${qs}`
   },
@@ -201,7 +222,9 @@ export const api = {
     const url = origin ? `${origin}/api/videos/upload` : '/api/videos/upload'
     const body = new FormData()
     body.append('file', file)
-    const res = await fetch(url, { method: 'POST', body })
+    // Don't set Content-Type manually here — the browser needs to add its
+    // own multipart boundary. The API key header is all we add.
+    const res = await fetch(url, { method: 'POST', body, headers: { ...authHeaders() } })
     if (!res.ok) {
       const detail = await res.text()
       throw new Error(detail || `${res.status} ${res.statusText}`)
@@ -249,12 +272,21 @@ export const api = {
       }
     }
   },
-  liveStart: (source: string) => post<LiveStatus>('/api/live/start', { source }),
+  liveStart: (source: string, cameraId?: string) =>
+    post<LiveStatus>('/api/live/start', cameraId ? { source, camera_id: cameraId } : { source }),
   liveStop: () => post<LiveStatus>('/api/live/stop'),
 
   /** Latest JPEG snapshot URL (preferred over MJPEG in Chrome). */
-  frameUrl: () => `${resolveApiOrigin()}/api/live/frame.jpg?t=${Date.now()}`,
+  frameUrl: () => {
+    const qs = new URLSearchParams({ t: String(Date.now()) })
+    if (API_KEY) qs.set('api_key', API_KEY)
+    return `${resolveApiOrigin()}/api/live/frame.jpg?${qs}`
+  },
 
   /** MJPEG URL — localhost uses :8001 directly; ngrok uses same-origin Vite proxy. */
-  streamUrl: () => `${resolveApiOrigin()}/api/live/stream?t=${Date.now()}`,
+  streamUrl: () => {
+    const qs = new URLSearchParams({ t: String(Date.now()) })
+    if (API_KEY) qs.set('api_key', API_KEY)
+    return `${resolveApiOrigin()}/api/live/stream?${qs}`
+  },
 }

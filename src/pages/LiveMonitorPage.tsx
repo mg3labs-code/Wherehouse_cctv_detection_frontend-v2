@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { resolveApiOrigin, api, type LiveStatus, type VideoItem } from '../api/client'
+import { resolveApiOrigin, authHeaders, api, type LiveStatus, type VideoItem } from '../api/client'
 
 export function LiveMonitorPage() {
   const [searchParams] = useSearchParams()
@@ -93,6 +93,7 @@ export function LiveMonitorPage() {
           const origin = resolveApiOrigin()
           const res = await fetch(`${origin}/api/live/frame.jpg?t=${Date.now()}`, {
             cache: 'no-store',
+            headers: { ...authHeaders() },
           })
           if (!res.ok) throw new Error(`frame ${res.status}`)
           const blob = await res.blob()
